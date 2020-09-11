@@ -7,6 +7,7 @@ menu "Host command handler subsystem"
 
 config EC_HOST_CMD
 	bool "Support Embedded Controller host command handler subsystem"
+	depends on EC_HOST_CMD_PERIPH
 	help
 	  Enable host command processing for embedded controllers on notebook
 	  computers. Enabling this option requires specifying a chosen

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: SPI-based EC Host Command Peripheral
+
+compatible: "zephyr,spi-ec-host-cmd"
+
+include: base.yaml
+
+properties:
+    label:
+      required: true
