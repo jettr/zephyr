@@ -19,6 +19,7 @@ config EC_HOST_CMD_SIMULATOR
 
 config EC_HOST_CMD_SPI
 	bool "Embedded Controller Host Command Peripheral SPI connection"
+	depends on SPI
 	help
 	  Enable the EC host command over the SPI bus.
 

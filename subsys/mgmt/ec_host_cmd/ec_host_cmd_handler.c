@@ -19,7 +19,9 @@
 #define TX_HEADER_SIZE (sizeof(struct ec_host_cmd_response_header))
 
 /** Used by host command handlers for their response before going over wire */
+// TODO change config option to remove TX name
 uint8_t tx_buffer[CONFIG_EC_HOST_CMD_HANDLER_TX_BUFFER];
+uint8_t rx_buffer[CONFIG_EC_HOST_CMD_HANDLER_TX_BUFFER];
 
 static uint8_t cal_checksum(const uint8_t *const buffer, const uint16_t size)
 {
@@ -48,6 +50,7 @@ static void send_error_response(const struct device *const ec_host_cmd_dev,
 		.len = TX_HEADER_SIZE,
 	};
 	ec_host_cmd_periph_send(ec_host_cmd_dev, &tx);
+	// TODO log error if rv is < 0
 }
 
 static void handle_host_cmds_entry(void *arg1, void *arg2, void *arg3)
@@ -56,23 +59,23 @@ static void handle_host_cmds_entry(void *arg1, void *arg2, void *arg3)
 	ARG_UNUSED(arg2);
 	ARG_UNUSED(arg3);
 	const struct device *ec_host_cmd_dev;
-	struct ec_host_cmd_periph_rx_ctx rx;
+	const struct ec_host_cmd_periph_rx_ctx rx = {
+		.buf = (uint8_t *)&rx_buffer,
+		.len = sizeof(rx_buffer),
+	};
 
 	ec_host_cmd_dev = device_get_binding(DT_LABEL(DT_HOST_CMD_DEV));
 
-	ec_host_cmd_periph_init(ec_host_cmd_dev, &rx);
-
 	while (1) {
-		/* We have finished reading from RX buffer, so allow another
-		 * incoming msg.
-		 */
-		k_sem_give(rx.dev_owns);
+		const int rx_len =
+			ec_host_cmd_periph_read(ec_host_cmd_dev, &rx);
 
-		/* Wait until and RX messages is received on host interace */
-		k_sem_take(rx.handler_owns, K_FOREVER);
-		/* rx buf and len now have valid incoming data */
+		if (rx_len <= 0) {
+			// TODO log error
+			continue;
+		}
 
-		if (*rx.len < RX_HEADER_SIZE) {
+		if (rx_len < RX_HEADER_SIZE) {
 			send_error_response(ec_host_cmd_dev,
 					    EC_HOST_CMD_REQUEST_TRUNCATED);
 			continue;
@@ -95,7 +98,7 @@ static void handle_host_cmds_entry(void *arg1, void *arg2, void *arg3)
 		 * It is okay to receive more since some hardware interfaces
 		 * add on extra padding bytes at the end.
 		 */
-		if (*rx.len < rx_valid_data_size) {
+		if (rx_len < rx_valid_data_size) {
 			send_error_response(ec_host_cmd_dev,
 					    EC_HOST_CMD_REQUEST_TRUNCATED);
 			continue;
@@ -131,7 +134,7 @@ static void handle_host_cmds_entry(void *arg1, void *arg2, void *arg3)
 		 * read data from previous host command runs.
 		 */
 		memset(&rx.buf[rx_valid_data_size], 0,
-		       *rx.len - rx_valid_data_size);
+		       rx_len - rx_valid_data_size);
 		memset(tx_buffer, 0, sizeof(tx_buffer));
 
 		struct ec_host_cmd_handler_args args = {
@@ -192,7 +195,10 @@ static void handle_host_cmds_entry(void *arg1, void *arg2, void *arg3)
 			.buf = tx_buffer,
 			.len = tx_valid_data_size,
 		};
-		ec_host_cmd_periph_send(ec_host_cmd_dev, &tx);
+		int send_rv = ec_host_cmd_periph_send(ec_host_cmd_dev, &tx);
+		if (send_rv < 0) {
+			// todo log error
+		}
 	}
 }
 

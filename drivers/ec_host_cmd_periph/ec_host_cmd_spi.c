@@ -8,7 +8,9 @@
 
 #include <device.h>
 #include <drivers/ec_host_cmd_periph.h>
+#include <drivers/spi.h>
 #include <string.h>
+#include <errno.h>
 
 /* TODO move to header file? */
 struct spi_cmd_config {
@@ -16,46 +18,97 @@ struct spi_cmd_config {
 };
 
 struct spi_cmd_data {
-	uint8_t rx_buffer[256];	//aligned?
-	size_t rx_len;
 	const struct device *spi_bus;
-	struct k_sem handler_owns;
-	struct k_sem dev_owns;
+};
+
+const uint8_t out_preamble[4] = {
+	0xfa,
+	0xfa,
+	0xfa,
+	0xec,
+};
+
+// TODO derived from device tree
+const struct spi_config spi_cfg = {
+	.frequency = 40000000, // 40Mhz
+	// TODO look up SPI_MODE_CPHA. I think this is Mode 0 normally
+	.operation = SPI_OP_MODE_SLAVE | SPI_TRANSFER_LSB | SPI_WORD_SET(8) |
+		     SPI_LINES_SINGLE,
+	.slave = 0,
+	.cs = NULL,
 };
 
 int ec_host_cmd_periph_spi_init(const struct device *dev,
 				struct ec_host_cmd_periph_rx_ctx *rx_ctx)
 {
-	struct spi_cmd_data *const data = dev->data;
 
+	/* TODO probably don't need this at add */
+
+	return 0;
+}
+
+int ec_host_cmd_periph_spi_read(const struct device *dev,
+				const struct ec_host_cmd_periph_rx_ctx *rx_ctx)
+{
+	struct spi_cmd_data *const data = dev->data;
+	
 	if (rx_ctx == NULL) {
 		return -EINVAL;
 	}
 
-	rx_ctx->buf = data->rx_buffer;
-	rx_ctx->len = &data->rx_len;
-	rx_ctx->dev_owns = &data->dev_owns;
-	rx_ctx->handler_owns = &data->handler_owns;
+	const struct spi_buf bufs[] = {
+		{
+			.buf = rx_ctx->buf,
+			.len = rx_ctx->len,
+		},
+	};
+	const struct spi_buf_set buf_set = {
+		.buffers = bufs,
+		.count = ARRAY_SIZE(bufs),
+	};
 
-	return 0;
+	const int read_rv = spi_read(data->spi_bus, &spi_cfg, &buf_set);
+	// TODO multiple by framecount. Maybe it is just 1 though
+	return read_rv < 0 ? read_rv : read_rv * 8;
 }
 
 int ec_host_cmd_periph_spi_send(const struct device *dev,
 				const struct ec_host_cmd_periph_tx_buf *buf)
 {
-	// TODO, transive on SPI
+	struct spi_cmd_data *const data = dev->data;
+	
+	if (buf == NULL) {
+		return -EINVAL;
+	}
 
-	// Need to put SPI header frame on TX buffer
-
-	return 0;
+	/* We have to remove the const quailifer on these buffers even though
+	 * write should not write to these buffers, only read from them.
+	 */
+	const struct spi_buf bufs[] = {
+		{
+			.buf = (void *)out_preamble,
+			.len = ARRAY_SIZE(out_preamble),
+		},
+		{
+			.buf = (void *)buf->buf,
+			.len = buf->len,
+		},
+	};
+	const struct spi_buf_set buf_set = {
+		.buffers = bufs,
+		.count = ARRAY_SIZE(bufs),
+	};
+	
+	return spi_write(data->spi_bus, &spi_cfg, &buf_set);
 }
 
-/* TODO handle incoming SPI transaction */
 
 static const struct ec_host_cmd_periph_api spi_cmd_api = {
 	.init = &ec_host_cmd_periph_spi_init,
+	.read = &ec_host_cmd_periph_spi_read,
 	.send = &ec_host_cmd_periph_spi_send,
 };
+
 
 static int ec_host_cmd_spi_init(const struct device *dev)
 {
@@ -67,10 +120,6 @@ static int ec_host_cmd_spi_init(const struct device *dev)
 	if (data->spi_bus == NULL) {
 		return -ENXIO;
 	}
-
-	/* Start with the device owning the buffer */
-	k_sem_init(&data->dev_owns, 1, 1);
-	k_sem_init(&data->handler_owns, 0, 1);
 
 	return 0;
 }
